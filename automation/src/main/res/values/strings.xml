@@ -1,0 +1,4 @@
+<resources>
+    <string name="aura_service_label">AURA Agent</string>
+    <string name="aura_service_description">Lets AURA read the screen and perform taps, scrolls and navigation that you start. A STOP button is shown whenever automation is running.</string>
+</resources>
