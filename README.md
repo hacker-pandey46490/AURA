@@ -3,45 +3,47 @@
 A modular, AI-powered Android automation agent built with Kotlin, Jetpack Compose and AccessibilityService.
 Developed entirely from a phone with Termux, Git, GitHub and GitHub Actions.
 
-**Status:** Phase 2 (action engine + task runner). See PROJECT_STATE.md.
+**Status:** Phase 3 (task graph + live task tree). See PROJECT_STATE.md.
 
 ## Build
 Push to GitHub. The "Build debug APK" workflow runs tests and uploads `aura-debug-apk`.
-From Termux: `gh run watch`, then `gh run download -n aura-debug-apk -D ~/storage/downloads/`.
+From Termux: `gh run watch`, then download into a clean folder (see CONTRIBUTING.md).
 
 ## First run on device (Android 13+ sideloaded apps)
 1. Install the APK.
 2. Settings > Apps > AURA > menu > **Allow restricted settings**.
 3. Settings > Accessibility > **AURA Agent** > enable.
-4. Open AURA. A red STOP button appears on screen whenever automation is running.
+4. Open AURA. A control panel (PAUSE / STOP) floats on screen whenever automation is running.
 
 ## Task script reference (Task runner tab)
-One step per line. `#` starts a comment.
+One node per line, `#` starts a comment, indentation is ignored.
 
 | Line | Meaning |
 |---|---|
 | `launch Settings` | open an app by its name |
 | `wait 1500` | pause (milliseconds) |
-| `click <selector>` | tap an element |
+| `click <selector>` (alias `tap`) | tap an element |
 | `longclick <selector>` / `doubletap <selector>` | long press / double tap |
-| `type <selector> = hello` | type into a field |
-| `type = hello` | type into the focused field |
+| `type <selector> = hello` / `type = hello` | type into a field / the focused field |
 | `scroll forward` / `scroll backward` | scroll the first scrollable area |
-| `swipe up` / `down` / `left` / `right` | swipe gesture (direction of the finger) |
+| `swipe up` / `down` / `left` / `right` | swipe (direction of the finger) |
 | `back` / `home` | system navigation |
+| `verify text:Foo` | check something is on screen (also `pkg:...`, `changed`); retries a few times |
+| `optional <step>` | if this step fails it is skipped instead of stopping the task |
+| `repeat 3` ... `end` | loop 1-100 times |
+| `if text:Foo` ... `else` ... `end` | condition (`text:` or `pkg:`); `else` is optional |
+| `group Name` ... `end` | named sub-sequence |
 
 Selectors: `text:Wi-Fi`, `desc:Search settings`, `id:vigour_search_edit`. A bare word means `text:`.
-Add a check after `=>`: `changed`, `text:Foo`, or `pkg:com.android.settings`.
-A failed check retries verification (without repeating the action), then stops the task.
-Steps that look like send / pay / delete / etc. are flagged for approval before the run.
+Add a check after `=>` on any step: `changed`, `text:Foo`, `pkg:com.android.settings`.
 
-## Termux cheat sheet
-```
-git add -A && git commit -m "message" && git push
-gh run watch
-gh run view $(gh run list -L1 --json databaseId -q '.[0].databaseId') --log-failed | grep -iE "error|e: |FAILED|wrong" | head -40
-```
+## Task tree
+Every run shows a live tree: grey = pending, blue (pulsing) = running, green = done, yellow = paused/waiting for you,
+red = failed, light grey = skipped. Tap any node to inspect its state, attempts, loop iteration and history.
+
+Controls (in the app and in the floating panel): Pause / Resume, Skip next (while paused), STOP.
+With "Ask me when a step fails" on, a failed step waits for Retry / Skip / Stop instead of ending the task.
 
 ## Safety
-Never commit keystores, tokens or API keys. Signing uses CI secrets via environment variables.
-Typed text is never written to logs or progress messages; password fields are redacted from screen dumps.
+Never commit keystores, tokens or API keys. Typed text is never written to logs or progress messages;
+password fields are redacted from screen dumps. Steps that look like send / pay / delete are flagged for approval before a run.

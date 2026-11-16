@@ -3,17 +3,12 @@ package com.aura.core.model
 data class ParseResult(val steps: List<TaskStep>, val errors: List<String>)
 
 /**
- * Parses the simple one-step-per-line task script.
+ * Parses single-step script lines (used by the flat parser here and by the graph parser).
  *
- *   launch Settings
- *   wait 1500
- *   click desc:Search settings => changed
- *   type id:search_edit = hello
- *   type = hello                      (types into the focused field)
- *   scroll forward | scroll backward
- *   swipe up | down | left | right
- *   back | home
- *   longclick <selector> | doubletap <selector>
+ *   launch Settings | wait 1500 | back | home
+ *   click <selector> (alias: tap) | longclick <selector> | doubletap <selector>
+ *   type <selector> = text | type = text
+ *   scroll forward | scroll backward | swipe up|down|left|right
  *
  * Selectors: text:Foo, desc:Foo, id:name (a bare word means text:). Lines starting with # are comments.
  * Optional check after "=>": changed, text:Foo, pkg:com.example.app
@@ -27,7 +22,7 @@ object TaskScriptParser {
             val line = raw.trim()
             if (line.isEmpty() || line.startsWith("#")) return@forEachIndexed
             try {
-                steps += parseLine(line)
+                steps += parseStepLine(line)
             } catch (e: IllegalArgumentException) {
                 errors += "Line ${i + 1}: ${e.message}"
             }
@@ -35,7 +30,7 @@ object TaskScriptParser {
         return ParseResult(steps, errors)
     }
 
-    private fun parseLine(line: String): TaskStep {
+    internal fun parseStepLine(line: String): TaskStep {
         val parts = line.split("=>", limit = 2)
         val body = parts[0].trim()
         val expect = if (parts.size > 1) parseExpectation(parts[1].trim()) else Expectation.None
@@ -56,7 +51,7 @@ object TaskScriptParser {
                     ?: fail("swipe needs up, down, left or right"),
             )
             "launch" -> if (arg.isEmpty()) fail("launch needs an app name") else Action.LaunchApp(arg)
-            "click" -> Action.Click(parseSelector(arg))
+            "click", "tap" -> Action.Click(parseSelector(arg))
             "longclick" -> Action.LongClick(parseSelector(arg))
             "doubletap" -> Action.DoubleTap(parseSelector(arg))
             "type" -> {
@@ -82,7 +77,7 @@ object TaskScriptParser {
         }.also { if (it.isEmpty()) fail("selector value is empty") }
     }
 
-    private fun parseExpectation(arg: String): Expectation = when {
+    internal fun parseExpectation(arg: String): Expectation = when {
         arg.equals("changed", ignoreCase = true) -> Expectation.ScreenChanged
         arg.startsWith("text:") -> Expectation.TextVisible(arg.removePrefix("text:").trim())
         arg.startsWith("pkg:") -> Expectation.PackageIs(arg.removePrefix("pkg:").trim())

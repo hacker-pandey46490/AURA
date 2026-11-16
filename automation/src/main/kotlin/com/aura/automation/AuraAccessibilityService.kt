@@ -3,10 +3,13 @@ package com.aura.automation
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
+import com.aura.core.graph.FailureDecision
+import com.aura.core.graph.GraphOutcome
+import com.aura.core.graph.TaskGraph
+import com.aura.core.graph.flattened
 import com.aura.core.model.Action
 import com.aura.core.model.ScreenSnapshot
 import com.aura.core.model.TaskOutcome
-import com.aura.core.model.TaskRunner
 import com.aura.core.model.TaskStep
 import com.aura.core.model.toPrettyString
 import kotlinx.coroutines.CancellationException
@@ -16,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class AuraAccessibilityService : AccessibilityService() {
@@ -25,12 +29,14 @@ class AuraAccessibilityService : AccessibilityService() {
     private lateinit var overlay: StopOverlay
     private lateinit var observer: AccessibilityScreenObserver
     private lateinit var executor: AccessibilityActionExecutor
+    private lateinit var factory: AgentFactory
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        overlay = StopOverlay(this) { stopAutomation() }
+        overlay = StopOverlay(this) { action -> handleOverlayAction(action) }
         observer = AccessibilityScreenObserver(this)
         executor = AccessibilityActionExecutor(this)
+        factory = AgentFactory(observer, executor, AuraRuntime.control)
         instance = this
         AuraRuntime.setServiceConnected(true)
     }
@@ -95,7 +101,7 @@ class AuraAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Runs a list of verified steps. The caller (UI) is responsible for user approval beforehand. */
+    /** Phase 2 flat runner, kept for compatibility. The UI now uses [startGraph]. */
     fun startTask(steps: List<TaskStep>) {
         if (steps.isEmpty() || taskJob?.isActive == true) return
         taskJob = scope.launch {
@@ -103,7 +109,7 @@ class AuraAccessibilityService : AccessibilityService() {
             AuraRuntime.initProgress(steps)
             overlay.show()
             try {
-                val runner = TaskRunner(observer, executor, pause = { delay(it) })
+                val runner = factory.createTaskRunner(pause = { delay(it) })
                 when (val outcome = runner.run(steps) { AuraRuntime.updateStep(it) }) {
                     TaskOutcome.Completed ->
                         AuraRuntime.finish(true, "All ${steps.size} steps completed and verified")
@@ -120,11 +126,68 @@ class AuraAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Runs a task graph. The caller (UI) is responsible for user approval beforehand.
+     * With [holdOnFailure] a failed step pauses the run and asks Retry / Skip / Stop.
+     */
+    fun startGraph(graph: TaskGraph, holdOnFailure: Boolean) {
+        if (graph.roots.isEmpty() || taskJob?.isActive == true) return
+        taskJob = scope.launch {
+            AuraRuntime.begin(graph.title)
+            AuraRuntime.initGraph(graph)
+            AuraRuntime.control.reset()
+            overlay.show()
+            val modeJob = launch {
+                combine(AuraRuntime.control.paused, AuraRuntime.control.awaitingDecision) { paused, deciding ->
+                    when {
+                        deciding -> OverlayMode.DECISION
+                        paused -> OverlayMode.PAUSED
+                        else -> OverlayMode.RUNNING
+                    }
+                }.collect { overlay.setMode(it) }
+            }
+            try {
+                val runner = factory.createGraphRunner(
+                    holdOnFailure = holdOnFailure,
+                    pause = { delay(it) },
+                    listener = { id, status -> AuraRuntime.updateNode(id, status) },
+                )
+                when (val outcome = runner.run(graph)) {
+                    GraphOutcome.Completed -> AuraRuntime.finish(true, "Task completed")
+                    is GraphOutcome.Failed -> {
+                        val title = graph.flattened().firstOrNull { it.node.id == outcome.nodeId }?.node?.title ?: outcome.nodeId
+                        AuraRuntime.finish(false, "Failed at \"$title\": ${outcome.reason}")
+                    }
+                    GraphOutcome.Stopped -> AuraRuntime.markStopped()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AuraRuntime.finish(success = false, message = "Failed: ${e.message}")
+            } finally {
+                modeJob.cancel()
+                overlay.hide()
+            }
+        }
+    }
+
     fun stopAutomation() {
         taskJob?.cancel()
         taskJob = null
         if (::overlay.isInitialized) overlay.hide()
         AuraRuntime.markStopped()
+    }
+
+    private fun handleOverlayAction(action: OverlayAction) {
+        val control = AuraRuntime.control
+        when (action) {
+            OverlayAction.PAUSE -> control.pause()
+            OverlayAction.RESUME -> control.resume()
+            OverlayAction.SKIP_NEXT -> control.requestSkipNext()
+            OverlayAction.RETRY -> control.decide(FailureDecision.RETRY)
+            OverlayAction.SKIP -> control.decide(FailureDecision.SKIP)
+            OverlayAction.STOP -> stopAutomation()
+        }
     }
 
     companion object {

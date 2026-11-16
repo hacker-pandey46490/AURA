@@ -24,7 +24,8 @@ data class TaskStep(
         get() = action.describe() + if (expect == Expectation.None) "" else "  => expect ${expect.describe()}"
 }
 
-enum class StepState { PENDING, RUNNING, SUCCEEDED, FAILED }
+/** PENDING grey, RUNNING blue, SUCCEEDED green, WAITING yellow (paused / waiting for the user), FAILED red, SKIPPED light grey. */
+enum class StepState { PENDING, RUNNING, SUCCEEDED, FAILED, SKIPPED, WAITING }
 
 data class StepUpdate(val index: Int, val state: StepState, val detail: String, val attempts: Int)
 

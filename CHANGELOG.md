@@ -1,13 +1,17 @@
 # Changelog
-## 0.2.0 (unreleased)
+## 0.3.0 (unreleased)
+- Task graph model: action, group, loop, condition nodes with per-node status, attempts, iteration and history
+- GraphRunner with loops, conditions, optional steps, verify nodes
+- Pause / resume / skip next / retry / skip / stop, from the app and a floating control panel
+- Live animated task tree (grey/blue/green/yellow/red) with node inspection
+- Script syntax: repeat, if/else, group, optional, verify, tap alias
+- AgentFactory composition root
+- Fix: stale results are cleared when a new script fails to parse
+
+## 0.2.0
 - Actions: click/long-click/double-tap by selector, type text, swipe, scroll backward, launch app by name, wait
-- TaskRunner with settle delay, expectation checks (changed / text / package) and retry limits
-- Task script parser and Task runner tab with step progress
-- Sensitivity guard: risky steps need approval before a run
-- Unit tests for runner, parser and guard
+- TaskRunner with settle delay, expectation checks and retry limits
+- Task script parser, sensitivity guard, Task runner tab
 
 ## 0.1.0
-- Project skeleton: modules `app`, `core`, `automation`
-- AccessibilityService with UI tree capture, scroll/back/home/click-by-text actions
-- STOP overlay, Compose Home screen with Settings demo
-- GitHub Actions: debug build + tests, optional signed release
+- Project skeleton, accessibility service, UI tree capture, STOP overlay, GitHub Actions
