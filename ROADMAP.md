@@ -1,6 +1,6 @@
 # Roadmap
-1. Foundation: skeleton, CI, accessibility service, screen inspector, stop control  <- current
-2. Action engine and manual task runner (click, type, long-press, gestures, app launch)
+1. Foundation: skeleton, CI, accessibility service, screen inspector, stop control  (done, verified)
+2. Action engine and manual task runner  <- current (code written, awaiting device verification)
 3. Task graph model and live task-tree UI; DI
 4. Model adapters and natural-language planner
 5. Verify/recover loop and popup handling

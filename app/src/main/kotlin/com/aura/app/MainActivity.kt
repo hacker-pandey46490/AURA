@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.aura.automation.AuraAccessibilityService
+import com.aura.core.model.TaskStep
 
 class MainActivity : ComponentActivity() {
 
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
                     )
                 },
                 onRunDemo = ::runDemo,
+                onStartTask = ::startTask,
                 onStop = { AuraAccessibilityService.instance?.stopAutomation() },
             )
         }
@@ -37,5 +39,14 @@ class MainActivity : ComponentActivity() {
         }
         startActivity(Intent(Settings.ACTION_SETTINGS))
         service.startDemo()
+    }
+
+    private fun startTask(steps: List<TaskStep>) {
+        val service = AuraAccessibilityService.instance
+        if (service == null) {
+            Toast.makeText(this, "Enable the AURA accessibility service first", Toast.LENGTH_LONG).show()
+            return
+        }
+        service.startTask(steps)
     }
 }

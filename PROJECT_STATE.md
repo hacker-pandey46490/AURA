@@ -1,35 +1,35 @@
 # Project State
 
 ## Completed phases
-None verified yet.
+- Phase 1 - Foundation (CI-built, verified on device, Android 16)
 
 ## Current phase
-Phase 1 - Foundation. Code written; awaiting first CI build and on-device test.
+Phase 2 - Action engine and manual task runner. Code written; awaiting CI build and on-device test.
 
-## Implemented features (written, NOT yet verified)
-- Gradle multi-module skeleton
-- Accessibility service + UI tree capture (password text redacted)
-- Actions: Back, Home, ScrollForward, ClickByText
-- STOP overlay, Compose Home screen, Settings demo
-- CI: debug build + tests; optional signed release
+## Implemented and verified
+- Gradle multi-module skeleton (app, core, automation), CI debug build + tests
+- Accessibility service, UI tree capture, STOP overlay, Settings demo
+
+## Implemented, NOT yet verified (Phase 2)
+- Actions: click/long-click/double-tap by selector, type, swipe, scroll backward, launch app by name, wait
+- TaskRunner (verification + retries), script parser, sensitivity guard (JVM unit tests run in CI)
+- Task runner tab with live step progress and pre-run approval dialog
 
 ## Pending features
-Everything from Phase 2 onward (see ROADMAP.md).
+Phase 3 onward (see ROADMAP.md).
 
 ## File structure
-settings.gradle.kts, build.gradle.kts, gradle.properties
-core/ (models, interfaces, tests)
-automation/ (service, mapper, executor, overlay, runtime)
-app/ (MainActivity, HomeScreen)
+core/ (model/*, api/*, tests), automation/ (service, executor, mapper, overlay, runtime), app/ (MainActivity, HomeScreen),
 .github/workflows/ (build.yml, release.yml)
 
-## Known bugs
-None known; code has not been compiled yet.
+## Known bugs / risks
+- Launching apps from the accessibility service while AURA is in the background may be blocked by Android; the runner reports it as a failed step.
+- Selectors are ROM-specific for view ids (use text/desc where possible).
+- CI shows Node 20 / setup-java v4 deprecation warnings (harmless).
 
 ## Build status
-Not built yet.
+Phase 1 passing. Phase 2 not built yet.
 
 ## Next development steps
-1. Push to GitHub, fix any CI compile errors.
-2. Install APK, run the on-device test checklist, record results here.
-3. Start Phase 2.
+1. Build Phase 2, fix any compile errors, run the device checklist, record results.
+2. Phase 3: task graph data model and live task-tree UI.

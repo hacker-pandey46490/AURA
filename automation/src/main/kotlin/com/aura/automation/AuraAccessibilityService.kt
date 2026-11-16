@@ -5,6 +5,9 @@ import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
 import com.aura.core.model.Action
 import com.aura.core.model.ScreenSnapshot
+import com.aura.core.model.TaskOutcome
+import com.aura.core.model.TaskRunner
+import com.aura.core.model.TaskStep
 import com.aura.core.model.toPrettyString
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -18,7 +21,7 @@ import kotlinx.coroutines.launch
 class AuraAccessibilityService : AccessibilityService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var demoJob: Job? = null
+    private var taskJob: Job? = null
     private lateinit var overlay: StopOverlay
     private lateinit var observer: AccessibilityScreenObserver
     private lateinit var executor: AccessibilityActionExecutor
@@ -60,14 +63,12 @@ class AuraAccessibilityService : AccessibilityService() {
         )
     }
 
-    /**
-     * Phase 1 demo: the caller has just opened Settings. We dump the tree, scroll once,
-     * dump again and verify the screen changed.
-     */
+    /** Phase 1 demo: dump the tree, scroll once, dump again and verify the screen changed. */
     fun startDemo() {
-        if (demoJob?.isActive == true) return
-        demoJob = scope.launch {
+        if (taskJob?.isActive == true) return
+        taskJob = scope.launch {
             AuraRuntime.begin("Settings demo")
+            AuraRuntime.initProgress(emptyList())
             overlay.show()
             try {
                 delay(2000)
@@ -94,9 +95,34 @@ class AuraAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Runs a list of verified steps. The caller (UI) is responsible for user approval beforehand. */
+    fun startTask(steps: List<TaskStep>) {
+        if (steps.isEmpty() || taskJob?.isActive == true) return
+        taskJob = scope.launch {
+            AuraRuntime.begin("task (${steps.size} steps)")
+            AuraRuntime.initProgress(steps)
+            overlay.show()
+            try {
+                val runner = TaskRunner(observer, executor, pause = { delay(it) })
+                when (val outcome = runner.run(steps) { AuraRuntime.updateStep(it) }) {
+                    TaskOutcome.Completed ->
+                        AuraRuntime.finish(true, "All ${steps.size} steps completed and verified")
+                    is TaskOutcome.Failed ->
+                        AuraRuntime.finish(false, "Step ${outcome.stepIndex + 1} failed: ${outcome.reason}")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AuraRuntime.finish(success = false, message = "Failed: ${e.message}")
+            } finally {
+                overlay.hide()
+            }
+        }
+    }
+
     fun stopAutomation() {
-        demoJob?.cancel()
-        demoJob = null
+        taskJob?.cancel()
+        taskJob = null
         if (::overlay.isInitialized) overlay.hide()
         AuraRuntime.markStopped()
     }
