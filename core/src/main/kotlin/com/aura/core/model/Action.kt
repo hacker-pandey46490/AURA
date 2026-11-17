@@ -8,6 +8,9 @@ sealed interface Action {
     data object Home : Action
     data object ScrollForward : Action
     data object ScrollBackward : Action
+
+    /** Presses the keyboard's Enter / Search key in the focused input (Android 11+). */
+    data object Enter : Action
     data class ClickByText(val text: String) : Action
     data class Click(val selector: Selector) : Action
     data class LongClick(val selector: Selector) : Action
@@ -32,6 +35,7 @@ fun Action.describe(): String = when (this) {
     Action.Home -> "home"
     Action.ScrollForward -> "scroll forward"
     Action.ScrollBackward -> "scroll backward"
+    Action.Enter -> "press enter"
     is Action.ClickByText -> "click text \"$text\""
     is Action.Click -> "click ${selector.describe()}"
     is Action.LongClick -> "long-click ${selector.describe()}"

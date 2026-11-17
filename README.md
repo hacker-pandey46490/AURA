@@ -3,20 +3,30 @@
 A modular, AI-powered Android automation agent built with Kotlin, Jetpack Compose and AccessibilityService.
 Developed entirely from a phone with Termux, Git, GitHub and GitHub Actions.
 
-**Status:** Phase 3 (task graph + live task tree). See PROJECT_STATE.md.
+**Status:** Phase 4 (AI planner). See PROJECT_STATE.md.
 
 ## Build
 Push to GitHub. The "Build debug APK" workflow runs tests and uploads `aura-debug-apk`.
-From Termux: `gh run watch`, then download into a clean folder (see CONTRIBUTING.md).
 
 ## First run on device (Android 13+ sideloaded apps)
 1. Install the APK.
 2. Settings > Apps > AURA > menu > **Allow restricted settings**.
 3. Settings > Accessibility > **AURA Agent** > enable.
-4. Open AURA. A control panel (PAUSE / STOP) floats on screen whenever automation is running.
 
-## Task script reference (Task runner tab)
-One node per line, `#` starts a comment, indentation is ignored.
+## Ask tab (AI planner)
+1. Tap **AI settings**, choose a provider, enter the model name and API key, tap **Test connection**, then **Save**.
+   - Anthropic: default model `claude-sonnet-5-5`.
+   - OpenAI-compatible: any cloud or local server that offers `/chat/completions` (OpenAI, OpenRouter, Groq, Ollama, llama.cpp ...).
+     For a server on this phone use `http://127.0.0.1:<port>/v1` (plain HTTP is allowed only for localhost).
+2. Type what you want ("Open Settings and scroll down") and tap **Make a plan**.
+3. If the AI is unsure it asks one question; answer it.
+4. Review the plan in the dialog and tap **Run**. Plans never run without your approval.
+
+Privacy: only your request (and your installed app names, if you switch that on) is sent to the AI service.
+Screen contents are not sent in this phase. The API key is stored encrypted with the Android Keystore.
+
+## Script tab (advanced)
+Same language the AI writes. One node per line, `#` starts a comment.
 
 | Line | Meaning |
 |---|---|
@@ -25,25 +35,18 @@ One node per line, `#` starts a comment, indentation is ignored.
 | `click <selector>` (alias `tap`) | tap an element |
 | `longclick <selector>` / `doubletap <selector>` | long press / double tap |
 | `type <selector> = hello` / `type = hello` | type into a field / the focused field |
+| `enter` | press the keyboard's Enter / Search key (Android 11+) |
 | `scroll forward` / `scroll backward` | scroll the first scrollable area |
 | `swipe up` / `down` / `left` / `right` | swipe (direction of the finger) |
 | `back` / `home` | system navigation |
-| `verify text:Foo` | check something is on screen (also `pkg:...`, `changed`); retries a few times |
-| `optional <step>` | if this step fails it is skipped instead of stopping the task |
+| `verify text:Foo` | check something is on screen (also `pkg:...`, `changed`) |
+| `optional <step>` | if this step fails it is skipped |
 | `repeat 3` ... `end` | loop 1-100 times |
-| `if text:Foo` ... `else` ... `end` | condition (`text:` or `pkg:`); `else` is optional |
+| `if text:Foo` ... `else` ... `end` | condition |
 | `group Name` ... `end` | named sub-sequence |
 
-Selectors: `text:Wi-Fi`, `desc:Search settings`, `id:vigour_search_edit`. A bare word means `text:`.
-Add a check after `=>` on any step: `changed`, `text:Foo`, `pkg:com.android.settings`.
-
-## Task tree
-Every run shows a live tree: grey = pending, blue (pulsing) = running, green = done, yellow = paused/waiting for you,
-red = failed, light grey = skipped. Tap any node to inspect its state, attempts, loop iteration and history.
-
-Controls (in the app and in the floating panel): Pause / Resume, Skip next (while paused), STOP.
-With "Ask me when a step fails" on, a failed step waits for Retry / Skip / Stop instead of ending the task.
+Selectors: `text:Wi-Fi`, `desc:Search settings`, `id:vigour_search_edit`. Add a check after `=>`: `changed`, `text:Foo`, `pkg:com.example`.
 
 ## Safety
-Never commit keystores, tokens or API keys. Typed text is never written to logs or progress messages;
-password fields are redacted from screen dumps. Steps that look like send / pay / delete are flagged for approval before a run.
+Never commit keystores, tokens or API keys. Typed text is never logged; password fields are redacted from screen dumps.
+Risky steps (send / pay / delete ...) are flagged for approval. A floating panel (PAUSE / STOP) is shown while automation runs.

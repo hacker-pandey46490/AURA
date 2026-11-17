@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import com.aura.core.api.ActionExecutor
@@ -30,6 +31,7 @@ internal class AccessibilityActionExecutor(private val service: AuraAccessibilit
         Action.Home -> global(AccessibilityService.GLOBAL_ACTION_HOME, "Home")
         Action.ScrollForward -> scroll(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, "forward")
         Action.ScrollBackward -> scroll(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, "backward")
+        Action.Enter -> pressEnter()
         is Action.ClickByText -> clickByText(action.text)
         is Action.Click -> click(action.selector)
         is Action.LongClick -> longClick(action.selector)
@@ -125,6 +127,17 @@ internal class AccessibilityActionExecutor(private val service: AuraAccessibilit
         val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         // Never put the typed text into messages or logs.
         return ActionResult(ok, if (ok) "Typed ${text.length} characters" else "Typing was rejected")
+    }
+
+    private fun pressEnter(): ActionResult {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return ActionResult(false, "The Enter key needs Android 11 or newer")
+        }
+        val root = service.rootInActiveWindow ?: return noWindow()
+        val node = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: return ActionResult(false, "No focused input field")
+        val ok = node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        return ActionResult(ok, if (ok) "Pressed Enter" else "Enter was rejected")
     }
 
     // ---- swiping --------------------------------------------------------------------------------

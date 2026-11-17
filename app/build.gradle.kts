@@ -12,8 +12,8 @@ android {
         applicationId = "com.aura.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     // Signing values come from environment variables (CI secrets), never from source code.
@@ -58,4 +58,5 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.security:security-crypto:1.0.0")
 }

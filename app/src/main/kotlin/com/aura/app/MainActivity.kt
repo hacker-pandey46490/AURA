@@ -13,6 +13,8 @@ import com.aura.core.graph.TaskGraph
 
 class MainActivity : ComponentActivity() {
 
+    private val settingsStore by lazy { AiSettingsStore(this) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -27,6 +29,8 @@ class MainActivity : ComponentActivity() {
                 onRunDemo = ::runDemo,
                 onStartGraph = ::startGraph,
                 onStop = { AuraAccessibilityService.instance?.stopAutomation() },
+                settingsStore = settingsStore,
+                appNames = ::launchableAppNames,
             )
         }
     }
@@ -48,6 +52,17 @@ class MainActivity : ComponentActivity() {
             return
         }
         service.startGraph(graph, holdOnFailure)
+    }
+
+    /** Names of launcher apps, shared with the AI only if the user switched that on. */
+    @Suppress("DEPRECATION")
+    private fun launchableAppNames(): List<String> {
+        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(query, 0)
+            .map { it.loadLabel(packageManager).toString() }
+            .distinct()
+            .sorted()
+            .take(150)
     }
 
     private fun toastServiceOff() {

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -39,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,9 +49,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aura.automation.AuraRuntime
+import com.aura.core.brain.ChatMessage
+import com.aura.core.brain.ChatRole
+import com.aura.core.brain.ModelResult
+import com.aura.core.brain.PlanResult
+import com.aura.core.brain.PlannerSession
+import com.aura.core.brain.ProviderKind
 import com.aura.core.graph.ActionNode
 import com.aura.core.graph.FailureDecision
 import com.aura.core.graph.FlatNode
@@ -61,25 +70,20 @@ import com.aura.core.graph.kind
 import com.aura.core.model.AgentStatus
 import com.aura.core.model.SensitivityGuard
 import com.aura.core.model.StepState
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val SAMPLE_SCRIPT = """# Phase 3 sample: loop, condition, verify, optional step, group
+private const val SAMPLE_SCRIPT = """# One step per line. Add '=> changed' to verify a step.
 launch Settings => pkg:com.android.settings
 wait 1500
 repeat 2
   scroll forward => changed
   optional scroll forward
 end
-if text:Display
-  verify text:Display
-else
-  scroll backward
-end
 group Return to top
   scroll backward => changed
-  optional scroll backward
   optional scroll backward
 end"""
 
@@ -90,6 +94,8 @@ fun HomeScreen(
     onRunDemo: () -> Unit,
     onStartGraph: (TaskGraph, Boolean) -> Unit,
     onStop: () -> Unit,
+    settingsStore: AiSettingsStore,
+    appNames: () -> List<String>,
 ) {
     val connected by AuraRuntime.serviceConnected.collectAsState()
     val status by AuraRuntime.status.collectAsState()
@@ -103,8 +109,8 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("AURA", style = MaterialTheme.typography.headlineMedium)
-                Text("Service: " + if (connected) "connected" else "not enabled")
-                Text("Status: $status - $message", fontSize = 14.sp)
+                Text("Service: " + (if (connected) "connected" else "not enabled") + "   |   $status", fontSize = 14.sp)
+                Text(message, fontSize = 13.sp, color = Color.Gray)
 
                 if (!connected) {
                     Text("1. Tap App info > menu > Allow restricted settings.\n2. Enable \"AURA Agent\" under Accessibility.")
@@ -112,13 +118,14 @@ fun HomeScreen(
                     Button(onClick = onOpenAccessibility, modifier = Modifier.fillMaxWidth()) { Text("Open accessibility settings") }
                 } else {
                     TabRow(selectedTabIndex = tab) {
-                        Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Demo") })
-                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Task runner") })
+                        Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Ask") })
+                        Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Script") })
+                        Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Demo") })
                     }
-                    if (tab == 0) {
-                        DemoTab(onRunDemo, onStop)
-                    } else {
-                        TaskRunnerTab(status, onStartGraph, onStop)
+                    when (tab) {
+                        0 -> AskTab(status, settingsStore, appNames, onStartGraph, onStop)
+                        1 -> ScriptTab(status, onStartGraph, onStop)
+                        else -> DemoTab(onRunDemo, onStop)
                     }
                 }
             }
@@ -126,25 +133,202 @@ fun HomeScreen(
     }
 }
 
+// ---- Ask tab ----------------------------------------------------------------------------------
+
 @Composable
-private fun ColumnScope.DemoTab(onRunDemo: () -> Unit, onStop: () -> Unit) {
-    val dump by AuraRuntime.dump.collectAsState()
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Button(onClick = onRunDemo) { Text("Run Settings demo") }
-        StopButton(onStop)
+private fun ColumnScope.AskTab(
+    status: AgentStatus,
+    settingsStore: AiSettingsStore,
+    appNames: () -> List<String>,
+    onStartGraph: (TaskGraph, Boolean) -> Unit,
+    onStop: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var request by rememberSaveable { mutableStateOf("") }
+    var answer by remember { mutableStateOf("") }
+    var question by remember { mutableStateOf<String?>(null) }
+    var thinking by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var session by remember { mutableStateOf<PlannerSession?>(null) }
+    var pending by remember { mutableStateOf<TaskGraph?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
+    val running = status == AgentStatus.RUNNING
+
+    fun submit(text: String, startNew: Boolean) {
+        val settings = settingsStore.load()
+        if (!settings.isConfigured) {
+            problem = "Set up the AI first: tap \"AI settings\"."
+            showSettings = true
+            return
+        }
+        val existing = session
+        val current = if (startNew || existing == null) {
+            PlannerSession(createProvider(settings), if (settings.shareAppNames) appNames() else emptyList())
+        } else {
+            existing
+        }
+        session = current
+        thinking = true
+        problem = null
+        scope.launch {
+            val result = current.send(text)
+            thinking = false
+            when (result) {
+                is PlanResult.Plan -> {
+                    question = null
+                    session = null
+                    pending = result.graph
+                }
+                is PlanResult.Question -> {
+                    question = result.text
+                    answer = ""
+                }
+                is PlanResult.Failure -> {
+                    question = null
+                    session = null
+                    problem = result.message
+                }
+            }
+        }
     }
-    Text("Last screen dump", style = MaterialTheme.typography.titleSmall)
-    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-        Text(
-            text = dump.ifEmpty { "(nothing captured yet)" },
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
+
+    OutlinedTextField(
+        value = request,
+        onValueChange = { request = it },
+        label = { Text("What should I do?") },
+        minLines = 2,
+        maxLines = 4,
+        enabled = !thinking && !running,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (running) {
+            RunButtons(onStop)
+        } else {
+            Button(
+                onClick = { submit(request, true) },
+                enabled = request.isNotBlank() && !thinking,
+            ) { Text("Make a plan") }
+            TextButton(onClick = { showSettings = true }) { Text("AI settings") }
+        }
+    }
+    if (thinking) Text("Thinking...", color = Color.Gray)
+    problem?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+    question?.let { q ->
+        Text(q, style = MaterialTheme.typography.titleSmall)
+        OutlinedTextField(
+            value = answer,
+            onValueChange = { answer = it },
+            label = { Text("Your answer") },
+            enabled = !thinking,
+            modifier = Modifier.fillMaxWidth(),
         )
+        Button(onClick = { submit(answer, false) }, enabled = answer.isNotBlank() && !thinking) { Text("Send answer") }
+    }
+
+    TaskTree()
+
+    pending?.let { g ->
+        PlanReviewDialog(
+            graph = g,
+            onConfirm = {
+                pending = null
+                onStartGraph(g, true)
+            },
+            onCancel = { pending = null },
+        )
+    }
+    if (showSettings) {
+        AiSettingsDialog(settingsStore) { showSettings = false }
     }
 }
 
 @Composable
-private fun ColumnScope.TaskRunnerTab(
+private fun AiSettingsDialog(store: AiSettingsStore, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var draft by remember { mutableStateOf(store.load()) }
+    var testResult by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("AI settings") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        draft = if (draft.kind == ProviderKind.ANTHROPIC) {
+                            draft.copy(kind = ProviderKind.OPENAI_COMPATIBLE, model = "")
+                        } else {
+                            draft.copy(kind = ProviderKind.ANTHROPIC, model = "claude-sonnet-5-5")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(draft.kind.displayName + "  (tap to switch)", fontSize = 12.sp) }
+                if (draft.kind == ProviderKind.OPENAI_COMPATIBLE) {
+                    OutlinedTextField(
+                        value = draft.baseUrl,
+                        onValueChange = { draft = draft.copy(baseUrl = it) },
+                        label = { Text("Server URL") },
+                        singleLine = true,
+                    )
+                }
+                OutlinedTextField(
+                    value = draft.model,
+                    onValueChange = { draft = draft.copy(model = it) },
+                    label = { Text("Model name") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = draft.apiKey,
+                    onValueChange = { draft = draft.copy(apiKey = it) },
+                    label = { Text("API key (stored encrypted)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Switch(checked = draft.shareAppNames, onCheckedChange = { draft = draft.copy(shareAppNames = it) })
+                    Text("Share my installed app names with the AI", fontSize = 13.sp)
+                }
+                Text(
+                    "Your request (and app names, if shared) is sent to this AI service. Screen contents are not sent.",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                )
+                TextButton(
+                    enabled = !testing && draft.isConfigured,
+                    onClick = {
+                        testing = true
+                        testResult = "Testing..."
+                        scope.launch {
+                            val reply = createProvider(draft).complete(
+                                listOf(ChatMessage(ChatRole.USER, "Reply with the single word OK.")),
+                            )
+                            testResult = when (reply) {
+                                is ModelResult.Success -> "Works: " + reply.text.trim().take(40)
+                                is ModelResult.Error -> "Failed: " + reply.message
+                            }
+                            testing = false
+                        }
+                    },
+                ) { Text("Test connection") }
+                if (testResult.isNotEmpty()) Text(testResult, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                store.save(draft)
+                onClose()
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+    )
+}
+
+// ---- Script tab (advanced) ---------------------------------------------------------------------
+
+@Composable
+private fun ColumnScope.ScriptTab(
     status: AgentStatus,
     onStartGraph: (TaskGraph, Boolean) -> Unit,
     onStop: () -> Unit,
@@ -153,12 +337,7 @@ private fun ColumnScope.TaskRunnerTab(
     var errors by remember { mutableStateOf<List<String>>(emptyList()) }
     var pending by remember { mutableStateOf<TaskGraph?>(null) }
     var holdOnFailure by rememberSaveable { mutableStateOf(true) }
-    var inspectedId by remember { mutableStateOf<String?>(null) }
-
-    val graph by AuraRuntime.graph.collectAsState()
-    val statuses by AuraRuntime.nodeStatuses.collectAsState()
-    val paused by AuraRuntime.control.paused.collectAsState()
-    val deciding by AuraRuntime.control.awaitingDecision.collectAsState()
+    val running = status == AgentStatus.RUNNING
 
     OutlinedTextField(
         value = script,
@@ -174,18 +353,8 @@ private fun ColumnScope.TaskRunnerTab(
         Text("Ask me (Retry / Skip / Stop) when a step fails", fontSize = 13.sp)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (status == AgentStatus.RUNNING) {
-            when {
-                deciding -> {
-                    Button(onClick = { AuraRuntime.control.decide(FailureDecision.RETRY) }) { Text("Retry") }
-                    Button(onClick = { AuraRuntime.control.decide(FailureDecision.SKIP) }) { Text("Skip") }
-                }
-                paused -> {
-                    Button(onClick = { AuraRuntime.control.resume() }) { Text("Resume") }
-                    Button(onClick = { AuraRuntime.control.requestSkipNext() }) { Text("Skip next") }
-                }
-                else -> Button(onClick = { AuraRuntime.control.pause() }) { Text("Pause") }
-            }
+        if (running) {
+            RunButtons(onStop)
         } else {
             Button(onClick = {
                 val result = GraphScriptParser.parse(script)
@@ -206,9 +375,101 @@ private fun ColumnScope.TaskRunnerTab(
                 }
             }) { Text("Review & run") }
         }
-        StopButton(onStop)
     }
     errors.forEach { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+
+    TaskTree()
+
+    pending?.let { g ->
+        PlanReviewDialog(
+            graph = g,
+            onConfirm = {
+                pending = null
+                onStartGraph(g, holdOnFailure)
+            },
+            onCancel = { pending = null },
+        )
+    }
+}
+
+// ---- Demo tab ---------------------------------------------------------------------------------
+
+@Composable
+private fun ColumnScope.DemoTab(onRunDemo: () -> Unit, onStop: () -> Unit) {
+    val dump by AuraRuntime.dump.collectAsState()
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(onClick = onRunDemo) { Text("Run Settings demo") }
+        StopButton(onStop)
+    }
+    Text("Last screen dump", style = MaterialTheme.typography.titleSmall)
+    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+        Text(
+            text = dump.ifEmpty { "(nothing captured yet)" },
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
+    }
+}
+
+// ---- shared pieces ----------------------------------------------------------------------------
+
+/** Pause / Resume / Skip / Retry (depending on state) plus STOP. */
+@Composable
+private fun RowScope.RunButtons(onStop: () -> Unit) {
+    val paused by AuraRuntime.control.paused.collectAsState()
+    val deciding by AuraRuntime.control.awaitingDecision.collectAsState()
+    when {
+        deciding -> {
+            Button(onClick = { AuraRuntime.control.decide(FailureDecision.RETRY) }) { Text("Retry") }
+            Button(onClick = { AuraRuntime.control.decide(FailureDecision.SKIP) }) { Text("Skip") }
+        }
+        paused -> {
+            Button(onClick = { AuraRuntime.control.resume() }) { Text("Resume") }
+            Button(onClick = { AuraRuntime.control.requestSkipNext() }) { Text("Skip next") }
+        }
+        else -> Button(onClick = { AuraRuntime.control.pause() }) { Text("Pause") }
+    }
+    StopButton(onStop)
+}
+
+@Composable
+private fun PlanReviewDialog(graph: TaskGraph, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    val flat = graph.flattened()
+    val flagged = flat
+        .filter { f -> (f.node as? ActionNode)?.let { SensitivityGuard.reason(it.step) } != null }
+        .map { it.node.id }
+        .toSet()
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Run \"${graph.title}\"?") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (flagged.isNotEmpty()) {
+                    Text("Lines with a warning sign may send, pay, delete or change data. Approve only if you intend that.\n")
+                }
+                flat.forEach { f ->
+                    val warn = if (f.node.id in flagged) "\u26A0 " else ""
+                    Text(
+                        "  ".repeat(f.depth) + warn + f.node.title,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(if (flagged.isEmpty()) "Run" else "Approve & run") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
+/** Live task tree with tap-to-inspect. */
+@Composable
+private fun ColumnScope.TaskTree() {
+    val graph by AuraRuntime.graph.collectAsState()
+    val statuses by AuraRuntime.nodeStatuses.collectAsState()
+    var inspectedId by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
         val g = graph
@@ -217,40 +478,6 @@ private fun ColumnScope.TaskRunnerTab(
                 NodeRow(flat, statuses[flat.node.id] ?: NodeStatus()) { inspectedId = flat.node.id }
             }
         }
-    }
-
-    pending?.let { g ->
-        val flat = g.flattened()
-        val flagged = flat
-            .filter { f -> (f.node as? ActionNode)?.let { SensitivityGuard.reason(it.step) } != null }
-            .map { it.node.id }
-            .toSet()
-        AlertDialog(
-            onDismissRequest = { pending = null },
-            title = { Text("Run ${flat.size} nodes?") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    if (flagged.isNotEmpty()) {
-                        Text("Lines with a warning sign may send, pay, delete or change data. Approve only if you intend that.\n")
-                    }
-                    flat.forEach { f ->
-                        val warn = if (f.node.id in flagged) "\u26A0 " else ""
-                        Text(
-                            "  ".repeat(f.depth) + warn + f.node.title,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    pending = null
-                    onStartGraph(g, holdOnFailure)
-                }) { Text(if (flagged.isEmpty()) "Run" else "Approve & run") }
-            },
-            dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } },
-        )
     }
 
     inspectedId?.let { id ->

@@ -5,7 +5,7 @@ data class ParseResult(val steps: List<TaskStep>, val errors: List<String>)
 /**
  * Parses single-step script lines (used by the flat parser here and by the graph parser).
  *
- *   launch Settings | wait 1500 | back | home
+ *   launch Settings | wait 1500 | back | home | enter
  *   click <selector> (alias: tap) | longclick <selector> | doubletap <selector>
  *   type <selector> = text | type = text
  *   scroll forward | scroll backward | swipe up|down|left|right
@@ -39,6 +39,7 @@ object TaskScriptParser {
 
         val action: Action = when (cmd) {
             "back" -> Action.Back
+            "enter" -> Action.Enter
             "home" -> Action.Home
             "wait" -> Action.Wait(arg.toLongOrNull()?.takeIf { it in 0L..60_000L } ?: fail("wait needs milliseconds (0-60000)"))
             "scroll" -> when (arg.lowercase()) {
